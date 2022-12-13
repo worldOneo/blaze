@@ -101,21 +101,15 @@ class HttpParser {
   Buffer<Pair> query{};
 
 public:
-  View<char> path() {
-    return _path.value_or(View<char>(0, 0, nullptr));
-  }
+  View<char> path() { return _path.value_or(View<char>(0, 0, nullptr)); }
 
-  HttpMethod method() {
-    return _method;
-  }
+  HttpMethod method() { return _method; }
 
-  int64_t content_length() {
-    return _contentLength;
-  }
+  int64_t content_length() { return _contentLength; }
 
   std::optional<View<char>> find_header(std::string header) {
-    for(size_t i = 0; i < headers.length(); i++) {
-      if(equalIgnoreCase(headers.get(i).key, header)) {
+    for (size_t i = 0; i < headers.length(); i++) {
+      if (equalIgnoreCase(headers.get(i).key, header)) {
         return headers.get(i).value;
       }
     }
@@ -233,7 +227,7 @@ public:
       result = ParseResult::BadData;
       return content;
     }
-    reader+=2;
+    reader += 2;
     result = ParseResult::Ok;
     return content.sub(reader, content.length());
   }
@@ -241,6 +235,6 @@ public:
 #undef skip_space
 #undef skip_nospace
 #undef quick_exit
-}; // namespace blaze
+};
 
 } // namespace blaze

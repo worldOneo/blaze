@@ -1,4 +1,4 @@
-#include <cstring>
+#pragma once
 #include <memory>
 #include <stdint.h>
 #include <stdlib.h>
@@ -48,20 +48,18 @@ private:
   std::vector<Store> data;
 
 public:
-  Buffer() : len{0}, data{} {
-    data.reserve(16);
-  }
+  Buffer() : len{0}, data{} { data.reserve(16); }
 
   void write(const Store data) {
-    this->data.reserve(len+1);
+    this->data.reserve(len + 1);
     this->data[len] = data;
     len++;
   }
 
   void write(const Store *data, size_t n) {
-    this->data.reserve(len+n);
-    for(int i = 0; i < n; i++) {
-      this->data[len+i] = data[i];
+    this->data.reserve(len + n);
+    for (int i = 0; i < n; i++) {
+      this->data[len + i] = data[i];
     }
     len += n;
   }
@@ -75,33 +73,6 @@ public:
   size_t length() { return len; }
 };
 
-bool equalIgnoreCase(View<char> first, std::string second) {
-  if (second.size() != first.length())
-    return false;
-  for (size_t i = 0; i < first.length(); i++) {
-    char a = first.get(i);
-    if (a >= 'A' && a <= 'Z') {
-      a = 'a' + a - 'A';
-    }
-    char b = second[i];
-    if (b >= 'A' && b <= 'Z') {
-      b = 'a' + b - 'A';
-    }
-    if (b != a) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool equal(View<char> me, std::string other) {
-  if (other.size() != me.length())
-    return false;
-  for (size_t i = 0; i < me.length(); i++) {
-    if (other[i] != me.get(i)) {
-      return false;
-    }
-  }
-  return true;
-}
+bool equal(View<char> me, std::string other);
+bool equalIgnoreCase(View<char> first, std::string second);
 } // namespace blaze
