@@ -22,15 +22,16 @@ class DataEvent {
 public:
   uint64_t context{};
   View<char> data;
-  Buffer<char> response;
-  DataEvent(uint64_t ctx, View<char> data, Buffer<char> response)
+  Buffer<char>* response;
+  DataEvent(uint64_t ctx, View<char> data, Buffer<char>* response)
       : context{ctx}, data{data}, response{response} {
-    this->response.reset();
+    this->response->reset();
   }
 };
 
 enum Action {
   NONE,
+  WRITE,
   CLOSE,
 };
 
@@ -38,35 +39,26 @@ class Server {
 public:
   virtual void crash(){};
   virtual void boot(){};
+  virtual void client_close(CloseEvent &event) = 0;
   virtual Action client_connect(OpenEvent &event) = 0;
-  virtual Action client_close(CloseEvent &event) = 0;
   virtual Action traffic(DataEvent &event) = 0;
 };
 
-class IORing {
-private:
-  Server *server;
-  struct sockaddr_in serv_addr {};
-  struct io_uring_params params {};
-  struct io_uring ring {};
-  struct sockaddr client_addr {};
-  socklen_t client_len = sizeof(client_addr);
-
-  int server_fd{};
-  int backlog = 512;
-
+class RingServer {
 public:
-  IORing(Server *server);
+  virtual void setup_on_port(int16_t portno){};
 
-  void setup_on_port(int16_t portno);
+  virtual void bind_socket(){};
 
-  void bind_socket();
+  virtual void setup_uring(){};
 
-  void setup_uring();
+  virtual void launch(){};
 
-  void launch();
+  virtual void listen_and_serve(){};
 
-  void listen_and_serve();
+  virtual ~RingServer(){};
 };
+
+std::unique_ptr<RingServer> create_ring_server(Server *server);
 
 } // namespace blaze

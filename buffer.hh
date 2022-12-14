@@ -36,6 +36,8 @@ public:
     }
     return true;
   }
+
+  Store *data() { return this->backing->data() + offset; }
 };
 
 template <typename Store> struct store_deleter {
@@ -45,40 +47,39 @@ template <typename Store> struct store_deleter {
 template <typename Store> class Buffer {
 private:
   size_t len;
-  std::vector<Store> data;
+  std::vector<Store> _data;
 
 public:
-  Buffer() : len{0}, data{} { data.reserve(16); }
+  Buffer() : len{0}, _data{} { _data.reserve(16); }
 
   void write(const Store data) {
-    this->data.reserve(len + 1);
-    this->data[len] = data;
+    this->_data.reserve(len + 1);
+    this->_data[len] = data;
     len++;
   }
 
   void write(const Store *data, size_t n) {
-    this->data.reserve(len + n);
-    for (int i = 0; i < n; i++) {
-      this->data[len + i] = data[i];
-    }
+    this->_data.reserve(len + n);
+    std::copy(data, data + n, &this->_data.data()[len]);
     len += n;
   }
 
-  void write_all(View<Store> data) {
-    this->data.reserve(len + data.length());
-    for (int i = 0; i < data.length(); i++) {
-      this->data[len + i] = data.get(i);
-    }
-    len += data.length();
-  }
+  void write_all(View<Store> data) { write(data.data(), data.length()); }
+
+  void mark_ready(size_t size) { len += size; }
+  void reserve(size_t size) { this->_data.reserve(size); }
 
   void reset() { this->len = 0; }
 
-  Store get(size_t index) { return data[index]; }
+  Store get(size_t index) { return _data[index]; }
+  Store* ref(size_t index) { return &_data.data()[index]; }
+
 
   View<Store> view() { return View<Store>(0, len, this); }
 
   size_t length() { return len; }
+
+  Store *data() { return _data.data(); }
 };
 
 bool equal(View<char> me, std::string other);
