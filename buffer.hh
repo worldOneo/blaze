@@ -64,6 +64,14 @@ public:
     len += n;
   }
 
+  void write_all(View<Store> data) {
+    this->data.reserve(len + data.length());
+    for (int i = 0; i < data.length(); i++) {
+      this->data[len + i] = data.get(i);
+    }
+    len += data.length();
+  }
+
   void reset() { this->len = 0; }
 
   Store get(size_t index) { return data[index]; }

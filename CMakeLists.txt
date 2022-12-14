@@ -6,9 +6,11 @@ add_library(BlazeLib
     buffer.hh
     buffer.cpp
     httpparser.cpp
+    transport.hh
+    transport.cpp
 )
 
-add_executable(Blaze transport.cpp)
+add_executable(Blaze server.cpp)
 find_library(IO_URING uring)
 target_link_libraries(Blaze BlazeLib ${IO_URING})
 
