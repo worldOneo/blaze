@@ -25,6 +25,8 @@ enum Version {
 struct Pair {
   View<char> key;
   View<char> value;
+  Pair() : key{0, 0, nullptr}, value{0, 0, nullptr} {}
+  Pair(View<char> key, View<char> value) : key{key}, value{value} {}
 };
 
 HttpMethod requestMethod(View<char> data) {
@@ -164,7 +166,7 @@ public:
         size_t paramValEnd = reader;
         View<char> key = content.sub(paramNameStart, paramNameEnd);
         View<char> val = content.sub(paramValStart, paramValEnd);
-        query.write(Pair{.key = key, .value = val});
+        query.write(Pair(key, val));
       }
     }
     while (reader < length && !isHorSpace(content.get(reader))) {
@@ -220,7 +222,7 @@ public:
       if (equalIgnoreCase(name, "Content-Length")) {
         _contentLength = bytesToInt(val);
       }
-      headers.write(Pair{.key = name, .value = val});
+      headers.write(Pair(name, val));
     }
     exit_incomplete(length < reader + 2);
     if (!equal(content.sub(reader, reader + 2), "\r\n")) {

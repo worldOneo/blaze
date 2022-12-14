@@ -22,14 +22,11 @@ enum class TaskType : int {
   ACCEPT,
   READ,
   WRITE,
-  PROV_BUF,
 };
 
 class Context {
 public:
   uint64_t ctxdata;
-  uint64_t bid;
-  uint64_t gbid;
   int client_fd;
   TaskType task;
   Buffer<char> recvBuff;
@@ -69,47 +66,46 @@ private:
   struct io_uring_params params {};
   struct sockaddr client_addr {};
   socklen_t client_len = sizeof(client_addr);
-  Buffer<MessageBuf> buffs{};
   Pool<Context> contexes{};
 
   int server_fd{};
   int backlog = 512;
 
-  char *buff_of(Context *ctx) { return buffs.ref(ctx->gbid)->data[ctx->bid]; }
-
-  void add_accept(Context *ctx, struct sockaddr *client_addr,
-                  socklen_t *client_len, unsigned flags) {
+  void add_accept(Context *ctx) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-    io_uring_prep_accept(sqe, server_fd, client_addr, client_len, 0);
-    io_uring_sqe_set_flags(sqe, flags);
     ctx->task = TaskType::ACCEPT;
-    sqe->user_data = (int64_t)ctx;
+    io_uring_prep_accept(sqe, server_fd, &client_addr, &client_len, 0);
+    io_uring_sqe_set_data(sqe, ctx);
+    io_uring_submit(&ring);
   }
 
-  void socket_read(Context *ctx, size_t message_size, unsigned flags) {
+  void socket_read(Context *ctx, size_t message_size) {
+    ctx->recvBuff.reserve(message_size);
+    char *data = ctx->recvBuff.data();
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-    io_uring_prep_recv(sqe, ctx->client_fd, NULL, message_size, 0);
-    io_uring_sqe_set_flags(sqe, flags);
-    sqe->buf_group = ctx->gbid;
     ctx->task = TaskType::READ;
-    sqe->user_data = (int64_t)ctx;
+    io_uring_prep_recv(sqe, ctx->client_fd, data, message_size, 0);
+    io_uring_sqe_set_data(sqe, ctx);
+    io_uring_submit(&ring);
   }
 
-  void socket_write(Context *ctx, unsigned flags) {
+  void socket_write(Context *ctx) {
+    char *data = ctx->sendBuff.data();
+    size_t size = ctx->sendBuff.length();
     struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-    io_uring_prep_send(sqe, ctx->client_fd, ctx->sendBuff.data(),
-                       ctx->sendBuff.length(), 0);
-    io_uring_sqe_set_flags(sqe, flags);
     ctx->task = TaskType::WRITE;
-    sqe->user_data = (int64_t)ctx;
+    io_uring_prep_send(sqe, ctx->client_fd, data, size, 0);
+    io_uring_sqe_set_data(sqe, ctx);
+    io_uring_submit(&ring);
   }
 
-  void provide_buf(Context *ctx) {
-    struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-    io_uring_prep_provide_buffers(sqe, buff_of(ctx), MAX_MESSAGE_LEN, 1,
-                                  ctx->gbid, ctx->bid);
-    ctx->task = TaskType::PROV_BUF;
-    sqe->user_data = (int64_t)ctx;
+  void reset(Context *ctx) {
+    CloseEvent event = CloseEvent(ctx->ctxdata);
+    server->client_close(event);
+    ctx->ctxdata = 0;
+    ctx->recvBuff.reset();
+    close(ctx->client_fd);
+    contexes.put(ctx);
   }
 
 public:
@@ -161,9 +157,6 @@ public:
     struct io_uring_cqe *cqe;
 
     sqe = io_uring_get_sqe(&ring);
-    buffs.reserve(1);
-    io_uring_prep_provide_buffers(sqe, buffs.ref(0)->data, MAX_MESSAGE_LEN,
-                                  BUFFERS_COUNT, 0, 0);
     io_uring_submit(&ring);
     io_uring_wait_cqe(&ring, &cqe);
     if (cqe->res < 0) {
@@ -172,25 +165,7 @@ public:
     }
     io_uring_cqe_seen(&ring, cqe);
     Context *ctx = new Context();
-    add_accept(ctx, &client_addr, &client_len, 0);
-  }
-
-  void reset(Context *ctx) {
-    ctx->recvBuff.reset();
-    provide_buf(ctx);
-    close(ctx->client_fd);
-    CloseEvent close = CloseEvent(ctx->ctxdata);
-    server->client_close(close);
-    contexes.put(ctx);
-  }
-
-  void handle_action(Action result, Context *ctx) {
-    if (result == Action::WRITE) {
-      ctx->recvBuff.reset();
-      socket_write(ctx, 0);
-    } else if (result == Action::CLOSE) {
-      reset(ctx);
-    }
+    add_accept(ctx);
   }
 
   void listen_and_serve() {
@@ -199,63 +174,51 @@ public:
     Pool<Buffer<char>> responseBuffers;
 
     server->boot();
+    struct io_uring_cqe *cqe;
     while (1) {
-      io_uring_submit_and_wait(&ring, 1);
-      struct io_uring_cqe *cqe;
-      unsigned head;
-      unsigned count = 0;
-
-      // go through all CQEs
-      io_uring_for_each_cqe(&ring, head, cqe) {
-        ++count;
-        Context *ctx = (Context *)cqe->user_data;
-        if (ctx == nullptr) {
-          throw std::runtime_error("mt context");
-        }
-
-        TaskType type = ctx->task;
-        if (cqe->res == -ENOBUFS) {
-          throw std::runtime_error("No buffer received from buffer selection.");
-        } else if (type == TaskType::PROV_BUF) {
-          if (cqe->res < 0) {
-            printf("cqe->res = %d\n", cqe->res);
-            exit(1);
-          }
-          contexes.put(ctx);
-        } else if (type == TaskType::ACCEPT) {
-          int sock_conn_fd = cqe->res;
-          if (sock_conn_fd >= 0) {
-            Context *other = contexes.get();
-            other->client_fd = sock_conn_fd;
-            socket_read(other, MAX_MESSAGE_LEN, IOSQE_BUFFER_SELECT);
-          }
-          add_accept(ctx, (struct sockaddr *)&client_addr, &client_len, 0);
-          OpenEvent event = OpenEvent(ctx->ctxdata);
-          Action result = server->client_connect(event);
-          handle_action(result, ctx);
-        } else if (type == TaskType::READ) {
-          int bytes_read = cqe->res;
-          int bid = cqe->flags >> 16;
-          ctx->bid = bid;
-          if (cqe->res <= 0) {
-            reset(ctx);
-          } else {
-            ctx->recvBuff.write(buff_of(ctx), bytes_read);
-            DataEvent event =
-                DataEvent(ctx->ctxdata, ctx->recvBuff.view(), &ctx->sendBuff);
-            Action result = server->traffic(event);
-            handle_action(result, ctx);
-          }
-        } else if (type == TaskType::WRITE) {
-          provide_buf(ctx);
-          Context *other = contexes.get();
-          other->client_fd = ctx->client_fd;
-          other->bid = ctx->bid;
-          socket_read(other, MAX_MESSAGE_LEN, IOSQE_BUFFER_SELECT);
-        }
+      int err = io_uring_wait_cqe(&ring, &cqe);
+      if (err < 0) {
+        std::cerr << "io_uring_wait_cqe error: " << strerror(errno)
+                  << std::endl;
+        exit(1);
+      }
+      Context *ctx = (Context *)io_uring_cqe_get_data(cqe);
+      if (ctx == nullptr) {
+        throw std::runtime_error("mt context");
       }
 
-      io_uring_cq_advance(&ring, count);
+      TaskType type = ctx->task;
+      if (type == TaskType::ACCEPT) {
+        int sock_conn_fd = cqe->res;
+        if (sock_conn_fd >= 0) {
+          Context *other = contexes.get();
+          other->client_fd = sock_conn_fd;
+          socket_read(other, MAX_MESSAGE_LEN);
+        }
+        add_accept(ctx);
+      } else if (type == TaskType::READ) {
+        int bytes_read = cqe->res;
+        int bid = cqe->flags >> 16;
+        int flags = cqe->flags & 0b1111'1111'1111'1111;
+        if (flags != 0) {
+          throw std::runtime_error("This shouldnt be...");
+        } else if (cqe->res <= 0) {
+          reset(ctx);
+        } else {
+          DataEvent event =
+              DataEvent(ctx->ctxdata, ctx->recvBuff.view(), &ctx->sendBuff);
+          Action result = server->traffic(event);
+          if (result == Action::WRITE) {
+            ctx->recvBuff.reset();
+            socket_write(ctx);
+          } else {
+            socket_read(ctx, MAX_MESSAGE_LEN);
+          }
+        }
+      } else if (type == TaskType::WRITE) {
+        socket_read(ctx, MAX_MESSAGE_LEN);
+      }
+      io_uring_cqe_seen(&ring, cqe);
     }
   }
 };
