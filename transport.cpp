@@ -76,7 +76,6 @@ private:
     ctx->task = TaskType::ACCEPT;
     io_uring_prep_accept(sqe, server_fd, &client_addr, &client_len, 0);
     io_uring_sqe_set_data(sqe, ctx);
-    io_uring_submit(&ring);
   }
 
   void socket_read(Context *ctx, size_t message_size) {
@@ -86,7 +85,6 @@ private:
     ctx->task = TaskType::READ;
     io_uring_prep_recv(sqe, ctx->client_fd, data, message_size, 0);
     io_uring_sqe_set_data(sqe, ctx);
-    io_uring_submit(&ring);
   }
 
   void socket_write(Context *ctx) {
@@ -96,7 +94,6 @@ private:
     ctx->task = TaskType::WRITE;
     io_uring_prep_send(sqe, ctx->client_fd, data, size, 0);
     io_uring_sqe_set_data(sqe, ctx);
-    io_uring_submit(&ring);
   }
 
   void reset(Context *ctx) {
@@ -176,49 +173,55 @@ public:
     server->boot();
     struct io_uring_cqe *cqe;
     while (1) {
-      int err = io_uring_wait_cqe(&ring, &cqe);
+      int err = io_uring_submit_and_wait(&ring, 1);
       if (err < 0) {
         std::cerr << "io_uring_wait_cqe error: " << strerror(errno)
                   << std::endl;
         exit(1);
       }
-      Context *ctx = (Context *)io_uring_cqe_get_data(cqe);
-      if (ctx == nullptr) {
-        throw std::runtime_error("mt context");
-      }
+      struct io_uring_cqe *cqe;
+      unsigned head;
+      unsigned count = 0;
+      io_uring_for_each_cqe(&ring, head, cqe) {
+        ++count;
+        Context *ctx = (Context *)io_uring_cqe_get_data(cqe);
+        if (ctx == nullptr) {
+          throw std::runtime_error("mt context");
+        }
 
-      TaskType type = ctx->task;
-      if (type == TaskType::ACCEPT) {
-        int sock_conn_fd = cqe->res;
-        if (sock_conn_fd >= 0) {
-          Context *other = contexes.get();
-          other->client_fd = sock_conn_fd;
-          socket_read(other, MAX_MESSAGE_LEN);
-        }
-        add_accept(ctx);
-      } else if (type == TaskType::READ) {
-        int bytes_read = cqe->res;
-        int bid = cqe->flags >> 16;
-        int flags = cqe->flags & 0b1111'1111'1111'1111;
-        if (flags != 0) {
-          throw std::runtime_error("This shouldnt be...");
-        } else if (cqe->res <= 0) {
-          reset(ctx);
-        } else {
-          DataEvent event =
-              DataEvent(ctx->ctxdata, ctx->recvBuff.view(), &ctx->sendBuff);
-          Action result = server->traffic(event);
-          if (result == Action::WRITE) {
-            ctx->recvBuff.reset();
-            socket_write(ctx);
-          } else {
-            socket_read(ctx, MAX_MESSAGE_LEN);
+        TaskType type = ctx->task;
+        if (type == TaskType::ACCEPT) {
+          int sock_conn_fd = cqe->res;
+          if (sock_conn_fd >= 0) {
+            Context *other = contexes.get();
+            other->client_fd = sock_conn_fd;
+            socket_read(other, MAX_MESSAGE_LEN);
           }
+          add_accept(ctx);
+        } else if (type == TaskType::READ) {
+          int bytes_read = cqe->res;
+          int bid = cqe->flags >> 16;
+          int flags = cqe->flags & 0b1111'1111'1111'1111;
+          if (flags != 0) {
+            throw std::runtime_error("This shouldnt be...");
+          } else if (cqe->res <= 0) {
+            reset(ctx);
+          } else {
+            DataEvent event =
+                DataEvent(ctx->ctxdata, ctx->recvBuff.view(), &ctx->sendBuff);
+            Action result = server->traffic(event);
+            if (result == Action::WRITE) {
+              ctx->recvBuff.reset();
+              socket_write(ctx);
+            } else {
+              socket_read(ctx, MAX_MESSAGE_LEN);
+            }
+          }
+        } else if (type == TaskType::WRITE) {
+          socket_read(ctx, MAX_MESSAGE_LEN);
         }
-      } else if (type == TaskType::WRITE) {
-        socket_read(ctx, MAX_MESSAGE_LEN);
       }
-      io_uring_cqe_seen(&ring, cqe);
+      io_uring_cq_advance(&ring, count);
     }
   }
 };
