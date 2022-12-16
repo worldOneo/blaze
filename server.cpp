@@ -1,5 +1,4 @@
-#include "httpparser.cpp"
-#include "transport.hh"
+#include "httpserver.hh"
 
 std::string httpResponse =
     "HTTP/1.1 200 OK\r\n"
@@ -12,30 +11,13 @@ std::string httpResponse =
     "Content-Type: text/html\r\n\r\n"
     "Hello world!";
 
-class Server : public blaze::Server {
+class Server : public blaze::HttpServer {
 public:
-  void crash(){};
-  void boot(){};
-  blaze::Action client_connect(blaze::OpenEvent &event) {
-    return blaze::Action::NONE;
-  };
-  void client_close(blaze::CloseEvent &event){};
-  blaze::Action traffic(blaze::DataEvent &event) {
-    if (blaze::equal(event.data, "quit\r\n")) {
-      return blaze::Action::CLOSE;
-    }
-    blaze::HttpParser parser{};
-    blaze::ParseResult result{};
-    auto body = parser.parse(event.data, result);
-    if (result == blaze::ParseResult::IncompleteData) {
-      return blaze::Action::NONE;
-    }
-    if (result != blaze::ParseResult::Ok) {
-      return blaze::Action::CLOSE;
-    }
-    event.response->write(httpResponse.c_str(), httpResponse.length());
-    return blaze::Action::WRITE;
-  };
+  void handle(blaze::HttpRequest &req, blaze::HttpResponse *res) {
+    auto buff = res->buffer();
+    buff->write("Hello, world!", 13);
+    res->write_body(buff->view());
+  }
 };
 
 int main(int argc, char *argv[]) {
@@ -47,8 +29,6 @@ int main(int argc, char *argv[]) {
   ring->setup_uring();
   printf("Binding uring\n");
   ring->bind_socket();
-  printf("Probing uring\n");
-  ring->launch();
   printf("Ready, listen and serve...\n");
   ring->listen_and_serve();
 }

@@ -51,9 +51,7 @@ public:
   virtual void bind_socket(){};
 
   virtual void setup_uring(){};
-
-  virtual void launch(){};
-
+  
   virtual void listen_and_serve(){};
 
   virtual ~RingServer(){};

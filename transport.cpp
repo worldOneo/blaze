@@ -11,6 +11,7 @@
 
 #include "buffer.hh"
 #include "transport.hh"
+#include "pool.hh"
 
 #define MAX_CONNECTIONS 4096
 #define BACKLOG 512
@@ -35,23 +36,6 @@ public:
 
 class HttpCodec {
   blaze::Buffer<int8_t> buf;
-};
-
-template <typename Data> class Pool {
-private:
-  std::deque<Data *> pooledItems;
-
-public:
-  Data *get() {
-    if (pooledItems.empty()) {
-      return new Data();
-    }
-    Data *tmp = pooledItems.front();
-    pooledItems.pop_front();
-    return tmp;
-  }
-
-  void put(Data *item) { pooledItems.push_back(item); }
 };
 
 struct MessageBuf {
@@ -133,7 +117,7 @@ public:
   }
 
   void setup_uring() {
-    if (io_uring_queue_init_params(2048, &ring, &params) < 0) {
+    if (io_uring_queue_init_params(32768, &ring, &params) < 0) {
       throw std::runtime_error("Failed to initialize uring");
     }
     if (!(params.features & IORING_FEAT_FAST_POLL)) {
@@ -148,24 +132,9 @@ public:
     free(probe);
   }
 
-  void launch() {
-    // register buffers for buffer selection
-    struct io_uring_sqe *sqe;
-    struct io_uring_cqe *cqe;
-
-    sqe = io_uring_get_sqe(&ring);
-    io_uring_submit(&ring);
-    io_uring_wait_cqe(&ring, &cqe);
-    if (cqe->res < 0) {
-      printf("cqe->res = %d\n", cqe->res);
-      exit(1);
-    }
-    io_uring_cqe_seen(&ring, cqe);
+  void listen_and_serve() {
     Context *ctx = new Context();
     add_accept(ctx);
-  }
-
-  void listen_and_serve() {
     Buffer<char> response{};
     Buffer<char> request{};
     Pool<Buffer<char>> responseBuffers;
