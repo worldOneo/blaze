@@ -1,5 +1,7 @@
 #include "httpserver.hh"
 #include "iostream"
+#include <ctime>
+#include <iomanip>
 
 namespace blaze {
 void HttpResponse::reset() {
@@ -11,11 +13,14 @@ void HttpResponse::reset() {
   }
   body.reset();
   headers.reset();
+  typeSet = false;
 }
 
 void HttpResponse::write_body(View<char> data) { body.write_all(data); }
 
 void HttpResponse::add_header(View<char> key, View<char> value) {
+  if (equalIgnoreCase(key, "Content-Type"))
+    typeSet = true;
   headers.write(Pair(key, value));
 }
 
@@ -131,6 +136,16 @@ void HttpResponse::render(HttpRequest &req, Buffer<char> *res) {
   res->write(text.c_str(), text.length());
   res->write('\r');
   res->write('\n');
+  res->write("Server: Blaze\r\n", 15);
+  
+  res->write("Date: ", 6);
+  char date[30];
+  time_t now = std::time(0);
+  std::tm tm = *std::gmtime(&now);
+  strftime(date, 30, "%a, %d %b %Y %H:%M:%S %Z", &tm);
+  res->write(date, 29);
+  res->write("\r\n", 2);
+
   for (size_t i = 0; i < headers.length(); i++) {
     res->write_all(headers.get(i).key);
     res->write(':');
@@ -139,6 +154,11 @@ void HttpResponse::render(HttpRequest &req, Buffer<char> *res) {
     res->write('\r');
     res->write('\n');
   }
+
+  if(!typeSet) {
+    res->write("Content-Type: text/plain\r\n", 26);
+  }
+
   res->write("Content-Length: ", 16);
   size_t l = body.length();
   while (l != 0) {
@@ -146,13 +166,14 @@ void HttpResponse::render(HttpRequest &req, Buffer<char> *res) {
     l /= 10;
     i++;
   }
-  if(i == 0) {
+  if (i == 0) {
     res->write('0');
   }
   while (i > 0) {
     i--;
     res->write(numBuff[i]);
   }
+
   res->write('\r');
   res->write('\n');
   res->write('\r');

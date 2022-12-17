@@ -10,8 +10,8 @@
 #include <unistd.h>
 
 #include "buffer.hh"
-#include "transport.hh"
 #include "pool.hh"
+#include "transport.hh"
 
 #define MAX_CONNECTIONS 4096
 #define BACKLOG 512
@@ -23,6 +23,7 @@ enum class TaskType : int {
   ACCEPT,
   READ,
   WRITE,
+  CLOSE,
 };
 
 class Context {
@@ -80,13 +81,13 @@ private:
     io_uring_sqe_set_data(sqe, ctx);
   }
 
-  void reset(Context *ctx) {
+  void socket_close(Context *ctx) {
     CloseEvent event = CloseEvent(ctx->ctxdata);
     server->client_close(event);
-    ctx->ctxdata = 0;
-    ctx->recvBuff.reset();
-    close(ctx->client_fd);
-    contexes.put(ctx);
+    ctx->task = TaskType::CLOSE;
+    struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
+    io_uring_prep_close(sqe, ctx->client_fd);
+    io_uring_sqe_set_data(sqe, ctx);
   }
 
 public:
@@ -174,7 +175,7 @@ public:
           if (flags != 0) {
             throw std::runtime_error("This shouldnt be...");
           } else if (cqe->res <= 0) {
-            reset(ctx);
+            socket_close(ctx);
           } else {
             DataEvent event =
                 DataEvent(ctx->ctxdata, ctx->recvBuff.view(), &ctx->sendBuff);
@@ -188,6 +189,10 @@ public:
           }
         } else if (type == TaskType::WRITE) {
           socket_read(ctx, MAX_MESSAGE_LEN);
+        } else if (type == TaskType::CLOSE) {
+          ctx->ctxdata = 0;
+          ctx->recvBuff.reset();
+          contexes.put(ctx);
         }
       }
       io_uring_cq_advance(&ring, count);

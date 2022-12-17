@@ -28,6 +28,7 @@ private:
   Buffer<Pair> headers{};
   Buffer<char> body{};
   std::deque<Buffer<char> *> claimed{};
+  bool typeSet{};
 
 public:
   Pool<Buffer<char>> *buffs;
