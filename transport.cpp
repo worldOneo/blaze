@@ -297,6 +297,9 @@ public:
         if (events[i].events & (EPOLLRDHUP | EPOLLHUP)) {
           epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ctx->client_fd, NULL);
           close(ctx->client_fd);
+          ctx->ctxdata = 0;
+          ctx->recvBuff.reset();
+          ctx->sendBuff.reset();
           contexes.put((Context *)events[i].data.ptr);
         }
       }
