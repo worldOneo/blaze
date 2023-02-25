@@ -188,9 +188,9 @@ Action HttpServer::client_connect(OpenEvent &event) {
 };
 void HttpServer::client_close(CloseEvent &event){};
 Action HttpServer::traffic(blaze::DataEvent &event) {
-  blaze::HttpParser parser{};
   blaze::ParseResult result{};
-  auto body = parser.parse(event.data, result);
+  blaze::HttpParser* parser = parsers.get();
+  auto body = parser->parse(event.data, result);
   if (result == blaze::ParseResult::IncompleteData) {
     return blaze::Action::NONE;
   }
@@ -204,6 +204,7 @@ Action HttpServer::traffic(blaze::DataEvent &event) {
   res->render(req, event.response);
   res->reset();
   ress.put(res);
+  parsers.put(parser);
   return blaze::Action::WRITE;
 };
 } // namespace blaze

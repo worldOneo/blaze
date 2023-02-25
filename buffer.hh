@@ -46,30 +46,33 @@ template <typename Store> struct store_deleter {
 
 template <typename Store> class Buffer {
 private:
-  size_t len;
-  std::vector<Store> _data;
+  size_t len{0};
+  std::vector<Store> _data{};
 
 public:
-  Buffer() : len{0}, _data{} { _data.reserve(16); }
+  Buffer() {}
 
   void write(const Store data) {
-    this->_data.push_back(data);
-    len++;
+    if(this->_data.size() <= len) {
+      this->reserve(1);
+    }
+    this->_data[len] = data;
+    this->len += 1;
   }
 
   void write(const Store *data, size_t n) {
     this->_data.reserve(len + n);
-    _data.insert(_data.end(), data, data + n);
-    len += n;
+    _data.insert(_data.begin() + len, data, data + n);
+    this->len += n;
   }
 
   void write_all(View<Store> data) { write(data.data(), data.length()); }
 
   void mark_ready(size_t size) { len += size; }
+
   void reserve(size_t size) {
-    if (size > len) {
-      this->len = size;
-      this->_data.reserve(size);
+    if (size > _data.size() - len) {
+      this->_data.resize(_data.size() + size);
     }
   }
 
