@@ -220,6 +220,15 @@ class EpollServer : public RingServer {
       throw std::runtime_error("add epoll_ctl()");
   }
 
+  void epoll_close(Context *ctx) {
+    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ctx->client_fd, NULL);
+    close(ctx->client_fd);
+    ctx->ctxdata = 0;
+    ctx->recvBuff.reset();
+    ctx->sendBuff.reset();
+    contexes.put(ctx);
+  }
+
   static int setnonblocking(int sockfd) {
     if (fcntl(sockfd, F_SETFD, fcntl(sockfd, F_GETFD, 0) | O_NONBLOCK) == -1) {
       return -1;
@@ -278,29 +287,30 @@ public:
           uint32_t client_fd = accept(
               server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
           setnonblocking(client_fd);
-          epoll_add(client_fd, EPOLLIN | EPOLLET | EPOLLRDHUP | EPOLLHUP);
+          epoll_add(client_fd, EPOLLIN | EPOLLRDHUP | EPOLLHUP);
         } else if (events[i].events & EPOLLIN) {
           ctx->recvBuff.reserve(MAX_MESSAGE_LEN);
           ssize_t bytes_read = read(
               ctx->client_fd, ctx->recvBuff.data() + ctx->recvBuff.length(),
               MAX_MESSAGE_LEN);
+          if (bytes_read == -1) {
+            epoll_close(ctx);
+            continue;
+          }
           ctx->recvBuff.mark_ready(bytes_read);
           DataEvent event =
               DataEvent(ctx->ctxdata, ctx->recvBuff.view(), &ctx->sendBuff);
           Action result = server->traffic(event);
           if (result == Action::WRITE) {
             ctx->recvBuff.reset();
-            write(ctx->client_fd, ctx->sendBuff.data(),
-                  ctx->sendBuff.length());
+            if (write(ctx->client_fd, ctx->sendBuff.data(),
+                      ctx->sendBuff.length()) == -1) {
+              epoll_close(ctx);
+            }
           }
         }
         if (events[i].events & (EPOLLRDHUP | EPOLLHUP)) {
-          epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ctx->client_fd, NULL);
-          close(ctx->client_fd);
-          ctx->ctxdata = 0;
-          ctx->recvBuff.reset();
-          ctx->sendBuff.reset();
-          contexes.put((Context *)events[i].data.ptr);
+          epoll_close(ctx);
         }
       }
     }
