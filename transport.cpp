@@ -190,7 +190,12 @@ public:
             }
           }
         } else if (type == TaskType::WRITE) {
-          socket_read(ctx, MAX_MESSAGE_LEN);
+          int res = cqe->res;
+          if (res <= 0) {
+            socket_close(ctx);
+          } else {
+            socket_read(ctx, MAX_MESSAGE_LEN);
+          }
         } else if (type == TaskType::CLOSE) {
           ctx->ctxdata = 0;
           ctx->recvBuff.reset();
