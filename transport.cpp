@@ -106,6 +106,8 @@ public:
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(portno);
     serv_addr.sin_addr.s_addr = INADDR_ANY;
+    bind_socket();
+    setup_uring();
   }
 
   void bind_socket() {
@@ -166,7 +168,14 @@ public:
           if (sock_conn_fd >= 0) {
             Context *other = contexes.get();
             other->client_fd = sock_conn_fd;
-            socket_read(other, MAX_MESSAGE_LEN);
+            OpenEvent event = OpenEvent(0);
+            Action result = server->client_connect(event);
+            other->ctxdata = event.context;
+            if (result == Action::CLOSE) {
+              socket_close(other);
+            } else {
+              socket_read(other, MAX_MESSAGE_LEN);
+            }
           }
           add_accept(ctx);
         } else if (type == TaskType::READ) {
@@ -219,6 +228,15 @@ class EpollServer : public RingServer {
     struct epoll_event event;
     auto ctx = contexes.get();
     ctx->client_fd = fd;
+
+    OpenEvent oevent = OpenEvent(0);
+    Action res = server->client_connect(oevent);
+    ctx->ctxdata = oevent.context;
+    if (res == Action::CLOSE) {
+      epoll_close(ctx);
+      return;
+    }
+
     event.events = ep_events;
     event.data.ptr = ctx;
     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &event))
@@ -226,6 +244,8 @@ class EpollServer : public RingServer {
   }
 
   void epoll_close(Context *ctx) {
+    CloseEvent event = CloseEvent(ctx->ctxdata);
+    server->client_close(event);
     epoll_ctl(epoll_fd, EPOLL_CTL_DEL, ctx->client_fd, NULL);
     close(ctx->client_fd);
     ctx->ctxdata = 0;
@@ -256,6 +276,8 @@ public:
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(portno);
     serv_addr.sin_addr.s_addr = INADDR_ANY;
+    bind_socket();
+    setup_epoll();
   };
 
   void bind_socket() {
@@ -268,7 +290,7 @@ public:
     }
   };
 
-  void setup_uring() {
+  void setup_epoll() {
     epoll_fd = epoll_create1(0);
     if (setnonblocking(server_fd) < 0) {
       throw std::runtime_error("Failed to make server socket not blocking");
@@ -276,12 +298,19 @@ public:
   };
 
   void listen_and_serve() {
-    size_t event_count = 1024 * 32;
+    size_t event_count = 1024 * 8;
     struct epoll_event events[event_count];
     int epoll_ret;
     struct sockaddr_in client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
-    epoll_add(server_fd, EPOLLIN);
+    struct epoll_event event;
+    event.events = EPOLLIN;
+    Context *serverCtx = new Context();
+    event.data.ptr = serverCtx;
+    serverCtx->client_fd = server_fd;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &event))
+      throw std::runtime_error("add epoll_ctl()");
+
     while (1) {
       epoll_ret = epoll_wait(epoll_fd, events, event_count, -1);
       if (epoll_ret < 0)
@@ -289,11 +318,14 @@ public:
       for (int i = 0; i < epoll_ret; i++) {
         Context *ctx = (Context *)events[i].data.ptr;
         if (ctx->client_fd == server_fd) {
+
           uint32_t client_fd = accept(
               server_fd, (struct sockaddr *)&client_addr, &client_addr_len);
           setnonblocking(client_fd);
           epoll_add(client_fd, EPOLLIN | EPOLLRDHUP | EPOLLHUP);
+
         } else if (events[i].events & EPOLLIN) {
+
           ctx->recvBuff.reserve(MAX_MESSAGE_LEN);
           ssize_t bytes_read = read(
               ctx->client_fd, ctx->recvBuff.data() + ctx->recvBuff.length(),
@@ -303,6 +335,7 @@ public:
             continue;
           }
           ctx->recvBuff.mark_ready(bytes_read);
+
           DataEvent event =
               DataEvent(ctx->ctxdata, ctx->recvBuff.view(), &ctx->sendBuff);
           Action result = server->traffic(event);
@@ -325,5 +358,9 @@ public:
 
 std::unique_ptr<RingServer> create_ring_server(Server *server) {
   return std::make_unique<IORing>(server);
+}
+
+std::unique_ptr<RingServer> create_epoll_server(Server *server) {
+  return std::make_unique<EpollServer>(server);
 }
 } // namespace blaze

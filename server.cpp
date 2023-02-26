@@ -1,4 +1,5 @@
 #include "httpserver.hh"
+#include <iostream>
 
 std::string httpResponse =
     "HTTP/1.1 200 OK\r\n"
@@ -14,6 +15,8 @@ std::string httpResponse =
 class Server : public blaze::HttpServer {
 public:
   void handle(blaze::HttpRequest &req, blaze::HttpResponse *res) {
+    std::cout << std::string(req.path().data(), req.path().length())
+              << std::endl;
     auto buff = res->buffer();
     buff->write("Hello, world!", 13);
     res->write_body(buff->view());
@@ -22,13 +25,9 @@ public:
 
 int main(int argc, char *argv[]) {
   Server *server = new Server();
-  auto ring = blaze::create_ring_server(server);
+  auto ring = blaze::create_epoll_server(server);
   printf("Preparing fd on port 8080\n");
   ring->setup_on_port(8080);
-  printf("Preparing fd for uring\n");
-  ring->setup_uring();
-  printf("Binding uring\n");
-  ring->bind_socket();
   printf("Ready, listen and serve...\n");
   ring->listen_and_serve();
 }

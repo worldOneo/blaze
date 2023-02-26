@@ -48,15 +48,12 @@ class RingServer {
 public:
   virtual void setup_on_port(int16_t portno){};
 
-  virtual void bind_socket(){};
-
-  virtual void setup_uring(){};
-  
   virtual void listen_and_serve(){};
 
   virtual ~RingServer(){};
 };
 
 std::unique_ptr<RingServer> create_ring_server(Server *server);
+std::unique_ptr<RingServer> create_epoll_server(Server *server);
 
 } // namespace blaze

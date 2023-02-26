@@ -7,11 +7,11 @@
 namespace blaze {
 class HttpRequest {
 private:
-  HttpParser* _parser;
+  HttpParser *_parser;
   View<char> _body;
 
 public:
-  HttpRequest(HttpParser* p, View<char> body) : _parser{p}, _body{body} {}
+  HttpRequest(HttpParser *p, View<char> body) : _parser{p}, _body{body} {}
   Version version() { return _parser->version(); }
   HttpMethod method() { return _parser->method(); }
   int64_t content_length() { return _parser->content_length(); }
@@ -20,6 +20,7 @@ public:
     return _parser->find_header(header);
   }
   View<char> body() { return _body; }
+  View<char> path() { return _parser->path(); }
 };
 
 class HttpResponse {

@@ -9,12 +9,12 @@ static void BM_HttpResponse(benchmark::State &state) {
              "these/that\r\n\r\n",
              82);
 
-  blaze::Buffer<char> respBuff{};
-  blaze::HttpRequest request{parser, data.view()};
-  blaze::HttpResponse resp{};
   blaze::Pool<blaze::Buffer<char>> buffs{};
-  resp.buffs = &buffs;
+  blaze::Buffer<char> respBuff{};
   for (auto _ : state) {
+    blaze::HttpResponse resp{};
+    resp.buffs = &buffs;
+    blaze::HttpRequest request{&parser, data.view()};
     resp.render(request, &respBuff);
     benchmark::DoNotOptimize(&resp);
     benchmark::DoNotOptimize(&respBuff);
